@@ -7,6 +7,7 @@ const METERS_PER_MILE = 1609.344;
 
 export default function App() {
   const [routeGeoJson, setRouteGeoJson] = useState(null);
+  const [amenityStops, setAmenityStops] = useState([]);
   const [stats, setStats] = useState(null);
   const [start, setStart] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -18,6 +19,7 @@ export default function App() {
     try {
       const result = await generateRoute(params);
       setRouteGeoJson(result.geoJson);
+      setAmenityStops(result.amenityStops ?? []);
       setStats({
         distanceMiles: (result.distanceMeters / METERS_PER_MILE).toFixed(2),
         durationMin: (result.durationSeconds / 60).toFixed(0),
@@ -41,7 +43,7 @@ export default function App() {
           </div>
         )}
       </div>
-      <RouteMap routeGeoJson={routeGeoJson} start={start} />
+      <RouteMap routeGeoJson={routeGeoJson} start={start} amenityStops={amenityStops} />
     </div>
   );
 }

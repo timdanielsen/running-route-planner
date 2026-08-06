@@ -4,71 +4,39 @@ using System.Text.Json;
 namespace RunningRoutes.Api.Services;
 
 /// <summary>
-/// Looks up graveyard/cemetery boundaries from OpenStreetMap via the public Overpass API, so
-/// routes can be steered around them with ORS's avoid_polygons option. There's no "avoid
-/// graveyards" flag on ORS itself - this is what supplies the actual geometry to avoid.
+/// Looks up graveyard/cemetery boundaries from OpenStreetMap via Overpass, so routes can be
+/// steered around them with ORS's avoid_polygons option. There's no "avoid graveyards" flag on
+/// ORS itself - this is what supplies the actual geometry to avoid.
 ///
-/// Best-effort by design: Overpass is a free, rate-limited public service, and individual OSM
-/// ways occasionally have self-intersecting or otherwise malformed geometry. Any failure here
-/// (network, timeout, bad geometry) just means route generation proceeds without graveyard
-/// avoidance - it should never take down route generation itself.
+/// Best-effort by design: individual OSM ways occasionally have self-intersecting or otherwise
+/// malformed geometry, and Overpass itself can be unreachable. Any failure here just means route
+/// generation proceeds without graveyard avoidance - it should never take down route generation.
 /// </summary>
 public class GraveyardLookupService : IGraveyardLookupService
 {
-    private const double MilesPerDegreeLatitude = 69.0;
-    private readonly HttpClient _httpClient;
-    private readonly ILogger<GraveyardLookupService> _logger;
+    private readonly IOverpassClient _overpass;
 
-    public GraveyardLookupService(HttpClient httpClient, ILogger<GraveyardLookupService> logger)
+    public GraveyardLookupService(IOverpassClient overpass)
     {
-        _httpClient = httpClient;
-        _logger = logger;
-        _httpClient.BaseAddress ??= new Uri("https://overpass-api.de/");
+        _overpass = overpass;
     }
 
     public async Task<IReadOnlyList<double[][]>> FindNearbyGraveyardsAsync(double lat, double lon, double radiusMiles, CancellationToken ct)
     {
-        try
-        {
-            var (south, west, north, east) = BoundingBox(lat, lon, radiusMiles);
-            var query = $$"""
-                [out:json][timeout:15];
-                (
-                  way["landuse"="cemetery"]({{Fmt(south)}},{{Fmt(west)}},{{Fmt(north)}},{{Fmt(east)}});
-                  way["amenity"="grave_yard"]({{Fmt(south)}},{{Fmt(west)}},{{Fmt(north)}},{{Fmt(east)}});
-                  relation["landuse"="cemetery"]({{Fmt(south)}},{{Fmt(west)}},{{Fmt(north)}},{{Fmt(east)}});
-                  relation["amenity"="grave_yard"]({{Fmt(south)}},{{Fmt(west)}},{{Fmt(north)}},{{Fmt(east)}});
-                );
-                out geom;
-                """;
+        var (south, west, north, east) = GeoMath.BoundingBox(lat, lon, radiusMiles);
+        var query = $$"""
+            [out:json][timeout:15];
+            (
+              way["landuse"="cemetery"]({{Fmt(south)}},{{Fmt(west)}},{{Fmt(north)}},{{Fmt(east)}});
+              way["amenity"="grave_yard"]({{Fmt(south)}},{{Fmt(west)}},{{Fmt(north)}},{{Fmt(east)}});
+              relation["landuse"="cemetery"]({{Fmt(south)}},{{Fmt(west)}},{{Fmt(north)}},{{Fmt(east)}});
+              relation["amenity"="grave_yard"]({{Fmt(south)}},{{Fmt(west)}},{{Fmt(north)}},{{Fmt(east)}});
+            );
+            out geom;
+            """;
 
-            // The free public Overpass instance times out/5xx's fairly often under normal load;
-            // one retry noticeably improves the real-world hit rate without adding much latency.
-            for (var attempt = 1; attempt <= 2; attempt++)
-            {
-                using var response = await _httpClient.PostAsync(
-                    "api/interpreter",
-                    new FormUrlEncodedContent(new Dictionary<string, string> { ["data"] = query }),
-                    ct);
-
-                if (response.IsSuccessStatusCode)
-                {
-                    var doc = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
-                    return ParseRings(doc);
-                }
-
-                _logger.LogWarning(
-                    "Overpass returned {Status} on attempt {Attempt}/2{Retrying}",
-                    response.StatusCode, attempt, attempt == 1 ? "; retrying" : "; skipping graveyard avoidance for this request.");
-            }
-
-            return [];
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogWarning(ex, "Graveyard lookup failed; skipping graveyard avoidance for this request.");
-            return [];
-        }
+        var doc = await _overpass.QueryAsync(query, ct);
+        return doc is null ? [] : ParseRings(doc.Value);
     }
 
     private static List<double[][]> ParseRings(JsonElement doc)
@@ -130,15 +98,6 @@ public class GraveyardLookupService : IGraveyardLookupService
         {
             rings.Add(points.ToArray());
         }
-    }
-
-    private static (double South, double West, double North, double East) BoundingBox(double lat, double lon, double radiusMiles)
-    {
-        var latDelta = radiusMiles / MilesPerDegreeLatitude;
-        var milesPerDegreeLongitude = MilesPerDegreeLatitude * Math.Cos(lat * Math.PI / 180.0);
-        var lonDelta = radiusMiles / Math.Max(milesPerDegreeLongitude, 1.0);
-
-        return (lat - latDelta, lon - lonDelta, lat + latDelta, lon + lonDelta);
     }
 
     private static string Fmt(double value) => value.ToString(CultureInfo.InvariantCulture);

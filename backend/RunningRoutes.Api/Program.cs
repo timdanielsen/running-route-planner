@@ -9,9 +9,9 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 builder.Services.AddHttpClient<IOpenRouteServiceClient, OpenRouteServiceClient>();
-builder.Services.AddHttpClient<IGraveyardLookupService, GraveyardLookupService>(client =>
+builder.Services.AddHttpClient<IOverpassClient, OverpassClient>(client =>
 {
-    // Public Overpass instance; graveyard avoidance is best-effort, so keep this timeout short
+    // Public Overpass instance; these lookups are best-effort, so keep this timeout short
     // rather than letting a slow Overpass response stall route generation.
     client.Timeout = TimeSpan.FromSeconds(10);
     // Overpass rejects requests with no/generic User-Agent with 406 - .NET's HttpClient sends
@@ -19,6 +19,8 @@ builder.Services.AddHttpClient<IGraveyardLookupService, GraveyardLookupService>(
     client.DefaultRequestHeaders.UserAgent.ParseAdd(
         "RunningRoutePlanner/1.0 (+https://github.com/timdanielsen/running-route-planner)");
 });
+builder.Services.AddScoped<IGraveyardLookupService, GraveyardLookupService>();
+builder.Services.AddScoped<IAmenityLookupService, AmenityLookupService>();
 
 const string CorsPolicy = "AllowFrontendDev";
 builder.Services.AddCors(options =>

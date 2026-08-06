@@ -9,13 +9,16 @@ namespace RunningRoutes.Api.Services;
 ///     finding a real, walkable circuit of roughly the requested length).
 ///   - Out-and-back routes, by picking a point ~half the target distance away along a
 ///     bearing and asking ORS for a route through it and back to the start.
+///   - Either shape, but forced through specific waypoints (e.g. a restroom/water fountain)
+///     when the caller requires it - ORS's round_trip mode can't be forced through a specific
+///     point, so this switches to an explicit start -> stop(s) -> start route instead.
 ///
 /// Docs: https://openrouteservice.org/dev/#/api-docs/v2/directions/{profile}/geojson/post
 /// </summary>
 public class OpenRouteServiceClient : IOpenRouteServiceClient
 {
     private const string Profile = "foot-walking";
-    private const double MetersPerMile = 1609.344;
+    private const double MetersPerMile = GeoMath.MetersPerMile;
     private readonly HttpClient _httpClient;
     private readonly IGraveyardLookupService _graveyardLookup;
     private readonly ILogger<OpenRouteServiceClient> _logger;
@@ -46,8 +49,13 @@ public class OpenRouteServiceClient : IOpenRouteServiceClient
         _httpClient.BaseAddress ??= new Uri("https://api.openrouteservice.org/");
     }
 
-    public async Task<RouteResult> GenerateLoopAsync(double lat, double lon, double distanceMiles, int? seed, CancellationToken ct)
+    public async Task<RouteResult> GenerateLoopAsync(double lat, double lon, double distanceMiles, int? seed, IReadOnlyList<AmenityStop> requiredStops, CancellationToken ct)
     {
+        if (requiredStops.Count > 0)
+        {
+            return await GenerateThroughStopsAsync(lat, lon, distanceMiles, requiredStops, ct);
+        }
+
         var options = new Dictionary<string, object>
         {
             ["round_trip"] = new
@@ -73,8 +81,13 @@ public class OpenRouteServiceClient : IOpenRouteServiceClient
         return await PostDirectionsAsync(body, options, ct);
     }
 
-    public async Task<RouteResult> GenerateOutAndBackAsync(double lat, double lon, double distanceMiles, double? bearingDegrees, CancellationToken ct)
+    public async Task<RouteResult> GenerateOutAndBackAsync(double lat, double lon, double distanceMiles, double? bearingDegrees, IReadOnlyList<AmenityStop> requiredStops, CancellationToken ct)
     {
+        if (requiredStops.Count > 0)
+        {
+            return await GenerateThroughStopsAsync(lat, lon, distanceMiles, requiredStops, ct);
+        }
+
         var bearing = bearingDegrees ?? _random.NextDouble() * 360.0;
         var halfDistanceMeters = (distanceMiles * MetersPerMile) / 2.0;
         var turnaround = GeoMath.Destination(lat, lon, bearing, halfDistanceMeters);
@@ -96,6 +109,45 @@ public class OpenRouteServiceClient : IOpenRouteServiceClient
         };
 
         return await PostDirectionsAsync(body, options, ct);
+    }
+
+    // Used whenever the route must pass a specific point (a required restroom/water fountain
+    // stop). ORS's round_trip mode can't be forced through a waypoint - it only takes a single
+    // origin and finds its own shape - so this always uses an explicit start -> stop(s) -> start
+    // route instead, regardless of whether the caller asked for a Loop or an Out & back. Note:
+    // with only one stop, ORS will typically route back via the same streets (there's no "return
+    // via different streets" option for point-to-point routing the way round_trip has), so this
+    // can end up looking like an out-and-back even when Loop was requested.
+    private async Task<RouteResult> GenerateThroughStopsAsync(double lat, double lon, double distanceMiles, IReadOnlyList<AmenityStop> stops, CancellationToken ct)
+    {
+        var options = new Dictionary<string, object> { ["profile_params"] = QuietWeighting };
+        await AddAvoidPolygonsAsync(options, lat, lon, distanceMiles, ct);
+
+        var coordinates = new List<double[]> { new[] { lon, lat } };
+        coordinates.AddRange(stops.Select(stop => new[] { stop.Longitude, stop.Latitude }));
+
+        // The last required stop is picked close to the start on purpose (see
+        // RoutesController.FindBestStopAsync), so it reads as something passed "on the way"
+        // rather than the destination itself - but only if there's still route left to run.
+        // Continue past it, along the same bearing it was reached on, out to the usual
+        // half-distance turnaround before heading back.
+        var lastStop = stops[^1];
+        var halfDistanceMeters = (distanceMiles * MetersPerMile) / 2.0;
+        var distanceToLastStop = GeoMath.DistanceMeters(lat, lon, lastStop.Latitude, lastStop.Longitude);
+        if (halfDistanceMeters > distanceToLastStop)
+        {
+            var bearingToLastStop = GeoMath.Bearing(lat, lon, lastStop.Latitude, lastStop.Longitude);
+            var turnaround = GeoMath.Destination(lat, lon, bearingToLastStop, halfDistanceMeters);
+            coordinates.Add(new[] { turnaround.Lon, turnaround.Lat });
+        }
+
+        coordinates.Add(new[] { lon, lat });
+
+        var body = new { coordinates = coordinates.ToArray(), options };
+
+        var result = await PostDirectionsAsync(body, options, ct);
+        result.AmenityStops = stops.ToList();
+        return result;
     }
 
     // Looks up nearby graveyards and, if any are found, adds them to the request as an

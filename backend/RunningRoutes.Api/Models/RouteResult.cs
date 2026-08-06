@@ -11,4 +11,7 @@ public class RouteResult
     public required JsonElement GeoJson { get; set; }
     public double DistanceMeters { get; set; }
     public double DurationSeconds { get; set; }
+
+    /// <summary>Restrooms/water fountains the route was routed through, for highlighting on the map.</summary>
+    public List<AmenityStop> AmenityStops { get; set; } = [];
 }

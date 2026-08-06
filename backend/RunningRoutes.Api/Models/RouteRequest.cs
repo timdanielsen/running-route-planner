@@ -29,4 +29,16 @@ public class RouteRequest
     /// Optional seed so a loop request is reproducible/re-rollable. If null, ORS picks randomly.
     /// </summary>
     public int? Seed { get; set; }
+
+    /// <summary>
+    /// How many public restrooms the route must pass by (0 = none required), or generation
+    /// fails. Capped at 5.
+    /// </summary>
+    public int RestroomCount { get; set; }
+
+    /// <summary>
+    /// How many water fountains the route must pass by (0 = none required), or generation
+    /// fails. Capped at 5.
+    /// </summary>
+    public int WaterFountainCount { get; set; }
 }

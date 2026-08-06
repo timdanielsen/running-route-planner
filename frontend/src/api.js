@@ -2,7 +2,16 @@
  * Calls the ASP.NET Core backend, which in turn calls OpenRouteService.
  * Vite's dev proxy (see vite.config.js) forwards /api/* to http://localhost:5080.
  */
-export async function generateRoute({ latitude, longitude, distanceMiles, type, bearingDegrees, seed }) {
+export async function generateRoute({
+  latitude,
+  longitude,
+  distanceMiles,
+  type,
+  bearingDegrees,
+  seed,
+  restroomCount,
+  waterFountainCount,
+}) {
   const response = await fetch("/api/routes", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -13,6 +22,8 @@ export async function generateRoute({ latitude, longitude, distanceMiles, type, 
       type, // "Loop" | "OutAndBack" - matches the RouteType enum on the backend
       bearingDegrees,
       seed,
+      restroomCount,
+      waterFountainCount,
     }),
   });
 

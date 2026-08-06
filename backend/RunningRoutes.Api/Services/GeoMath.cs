@@ -7,6 +7,8 @@ namespace RunningRoutes.Api.Services;
 public static class GeoMath
 {
     private const double EarthRadiusMeters = 6371000;
+    public const double MetersPerMile = 1609.344;
+    private const double MilesPerDegreeLatitude = 69.0;
 
     /// <summary>
     /// Returns the lat/lon reached by travelling <paramref name="distanceMeters"/> from
@@ -29,6 +31,41 @@ public static class GeoMath
             Math.Cos(angularDistance) - Math.Sin(lat1) * Math.Sin(lat2));
 
         return (RadiansToDegrees(lat2), RadiansToDegrees(lon2));
+    }
+
+    /// <summary>Initial compass bearing (0 = north, 90 = east) from point 1 to point 2.</summary>
+    public static double Bearing(double lat1, double lon1, double lat2, double lon2)
+    {
+        var phi1 = DegreesToRadians(lat1);
+        var phi2 = DegreesToRadians(lat2);
+        var deltaLon = DegreesToRadians(lon2 - lon1);
+
+        var y = Math.Sin(deltaLon) * Math.Cos(phi2);
+        var x = Math.Cos(phi1) * Math.Sin(phi2) - Math.Sin(phi1) * Math.Cos(phi2) * Math.Cos(deltaLon);
+
+        return (RadiansToDegrees(Math.Atan2(y, x)) + 360.0) % 360.0;
+    }
+
+    /// <summary>Great-circle distance between two points, in meters.</summary>
+    public static double DistanceMeters(double lat1, double lon1, double lat2, double lon2)
+    {
+        var dLat = DegreesToRadians(lat2 - lat1);
+        var dLon = DegreesToRadians(lon2 - lon1);
+        var a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2) +
+                Math.Cos(DegreesToRadians(lat1)) * Math.Cos(DegreesToRadians(lat2)) *
+                Math.Sin(dLon / 2) * Math.Sin(dLon / 2);
+        var c = 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
+        return EarthRadiusMeters * c;
+    }
+
+    /// <summary>A lat/lon bounding box roughly <paramref name="radiusMiles"/> around a point.</summary>
+    public static (double South, double West, double North, double East) BoundingBox(double lat, double lon, double radiusMiles)
+    {
+        var latDelta = radiusMiles / MilesPerDegreeLatitude;
+        var milesPerDegreeLongitude = MilesPerDegreeLatitude * Math.Cos(lat * Math.PI / 180.0);
+        var lonDelta = radiusMiles / Math.Max(milesPerDegreeLongitude, 1.0);
+
+        return (lat - latDelta, lon - lonDelta, lat + latDelta, lon + lonDelta);
     }
 
     private static double DegreesToRadians(double degrees) => degrees * Math.PI / 180.0;

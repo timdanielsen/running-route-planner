@@ -8,6 +8,8 @@ export default function RouteForm({ onSubmit, onLocationChange, loading }) {
   const [distanceMiles, setDistanceMiles] = useState(3);
   const [type, setType] = useState("Loop");
   const [locating, setLocating] = useState(false);
+  const [restroomCount, setRestroomCount] = useState(0);
+  const [waterFountainCount, setWaterFountainCount] = useState(0);
 
   useEffect(() => {
     const lat = Number(latitude);
@@ -37,6 +39,8 @@ export default function RouteForm({ onSubmit, onLocationChange, loading }) {
       longitude: Number(longitude),
       distanceMiles: Number(distanceMiles),
       type,
+      restroomCount,
+      waterFountainCount,
     });
   }
 
@@ -98,6 +102,54 @@ export default function RouteForm({ onSubmit, onLocationChange, loading }) {
             />
             {" "}Out &amp; back
           </label>
+        </div>
+      </div>
+
+      <div className="field">
+        <label>Route by</label>
+        <div className="checkbox-row">
+          <input
+            type="checkbox"
+            id="passByRestroom"
+            checked={restroomCount > 0}
+            onChange={(e) => setRestroomCount(e.target.checked ? 1 : 0)}
+          />
+          <label htmlFor="passByRestroom">Public restroom</label>
+          {restroomCount > 0 && (
+            <select
+              aria-label="Number of public restrooms"
+              value={restroomCount}
+              onChange={(e) => setRestroomCount(Number(e.target.value))}
+            >
+              {[1, 2, 3, 4, 5].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+        <div className="checkbox-row">
+          <input
+            type="checkbox"
+            id="passByWaterFountain"
+            checked={waterFountainCount > 0}
+            onChange={(e) => setWaterFountainCount(e.target.checked ? 1 : 0)}
+          />
+          <label htmlFor="passByWaterFountain">Water fountain</label>
+          {waterFountainCount > 0 && (
+            <select
+              aria-label="Number of water fountains"
+              value={waterFountainCount}
+              onChange={(e) => setWaterFountainCount(Number(e.target.value))}
+            >
+              {[1, 2, 3, 4, 5].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
       </div>
 
