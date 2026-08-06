@@ -58,7 +58,7 @@ Opens at `http://localhost:5173`. Its dev server proxies `/api/*` to the backend
 
 ## 4. Try it
 
-Enter a latitude/longitude (or click "Use my location"), a distance in km, pick Loop or
+Enter a latitude/longitude (or click "Use my location"), a distance in miles, pick Loop or
 Out & back, and hit Generate. The route draws on the map with distance/time stats in the
 sidebar.
 

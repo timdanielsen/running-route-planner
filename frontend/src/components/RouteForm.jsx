@@ -1,13 +1,21 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const DEFAULT_START = { latitude: 40.7128, longitude: -74.006 }; // NYC, just as a placeholder
 
-export default function RouteForm({ onSubmit, loading }) {
+export default function RouteForm({ onSubmit, onLocationChange, loading }) {
   const [latitude, setLatitude] = useState(DEFAULT_START.latitude);
   const [longitude, setLongitude] = useState(DEFAULT_START.longitude);
-  const [distanceKm, setDistanceKm] = useState(5);
+  const [distanceMiles, setDistanceMiles] = useState(3);
   const [type, setType] = useState("Loop");
   const [locating, setLocating] = useState(false);
+
+  useEffect(() => {
+    const lat = Number(latitude);
+    const lon = Number(longitude);
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      onLocationChange({ latitude: lat, longitude: lon });
+    }
+  }, [latitude, longitude, onLocationChange]);
 
   function useMyLocation() {
     if (!navigator.geolocation) return;
@@ -27,7 +35,7 @@ export default function RouteForm({ onSubmit, loading }) {
     onSubmit({
       latitude: Number(latitude),
       longitude: Number(longitude),
-      distanceKm: Number(distanceKm),
+      distanceMiles: Number(distanceMiles),
       type,
     });
   }
@@ -57,13 +65,13 @@ export default function RouteForm({ onSubmit, loading }) {
       </div>
 
       <div className="field">
-        <label>Distance (km)</label>
+        <label>Distance (mi)</label>
         <input
           type="number"
           min="0.5"
           step="0.5"
-          value={distanceKm}
-          onChange={(e) => setDistanceKm(e.target.value)}
+          value={distanceMiles}
+          onChange={(e) => setDistanceMiles(e.target.value)}
         />
       </div>
 

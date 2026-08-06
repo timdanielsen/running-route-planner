@@ -24,9 +24,9 @@ public class RoutesController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<RouteResult>> Generate([FromBody] RouteRequest request, CancellationToken ct)
     {
-        if (request.DistanceKm <= 0)
+        if (request.DistanceMiles <= 0)
         {
-            return BadRequest("distanceKm must be greater than 0.");
+            return BadRequest("distanceMiles must be greater than 0.");
         }
 
         if (request.Latitude is < -90 or > 90 || request.Longitude is < -180 or > 180)
@@ -39,9 +39,9 @@ public class RoutesController : ControllerBase
             var result = request.Type switch
             {
                 RouteType.Loop => await _orsClient.GenerateLoopAsync(
-                    request.Latitude, request.Longitude, request.DistanceKm, request.Seed, ct),
+                    request.Latitude, request.Longitude, request.DistanceMiles, request.Seed, ct),
                 RouteType.OutAndBack => await _orsClient.GenerateOutAndBackAsync(
-                    request.Latitude, request.Longitude, request.DistanceKm, request.BearingDegrees, ct),
+                    request.Latitude, request.Longitude, request.DistanceMiles, request.BearingDegrees, ct),
                 _ => throw new ArgumentOutOfRangeException(nameof(request.Type), request.Type, "Unknown route type.")
             };
 

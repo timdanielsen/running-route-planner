@@ -3,6 +3,8 @@ import RouteForm from "./components/RouteForm.jsx";
 import RouteMap from "./components/RouteMap.jsx";
 import { generateRoute } from "./api.js";
 
+const METERS_PER_MILE = 1609.344;
+
 export default function App() {
   const [routeGeoJson, setRouteGeoJson] = useState(null);
   const [stats, setStats] = useState(null);
@@ -17,10 +19,9 @@ export default function App() {
       const result = await generateRoute(params);
       setRouteGeoJson(result.geoJson);
       setStats({
-        distanceKm: (result.distanceMeters / 1000).toFixed(2),
+        distanceMiles: (result.distanceMeters / METERS_PER_MILE).toFixed(2),
         durationMin: (result.durationSeconds / 60).toFixed(0),
       });
-      setStart({ latitude: params.latitude, longitude: params.longitude });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -32,11 +33,11 @@ export default function App() {
     <div className="app">
       <div className="sidebar">
         <h2>Running Route Planner</h2>
-        <RouteForm onSubmit={handleSubmit} loading={loading} />
+        <RouteForm onSubmit={handleSubmit} onLocationChange={setStart} loading={loading} />
         {error && <div className="error">{error}</div>}
         {stats && (
           <div className="stats">
-            <div>Distance: {stats.distanceKm} km</div>
+            <div>Distance: {stats.distanceMiles} mi</div>
             <div>Est. time: {stats.durationMin} min</div>
           </div>
         )}

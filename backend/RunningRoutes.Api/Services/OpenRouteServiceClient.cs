@@ -15,6 +15,7 @@ namespace RunningRoutes.Api.Services;
 public class OpenRouteServiceClient : IOpenRouteServiceClient
 {
     private const string Profile = "foot-walking";
+    private const double MetersPerMile = 1609.344;
     private readonly HttpClient _httpClient;
     private readonly ILogger<OpenRouteServiceClient> _logger;
     private readonly Random _random = new();
@@ -39,7 +40,7 @@ public class OpenRouteServiceClient : IOpenRouteServiceClient
         _httpClient.BaseAddress ??= new Uri("https://api.openrouteservice.org/");
     }
 
-    public async Task<RouteResult> GenerateLoopAsync(double lat, double lon, double distanceKm, int? seed, CancellationToken ct)
+    public async Task<RouteResult> GenerateLoopAsync(double lat, double lon, double distanceMiles, int? seed, CancellationToken ct)
     {
         var body = new
         {
@@ -48,7 +49,7 @@ public class OpenRouteServiceClient : IOpenRouteServiceClient
             {
                 round_trip = new
                 {
-                    length = distanceKm * 1000,
+                    length = distanceMiles * MetersPerMile,
                     points = 5,
                     seed = seed ?? _random.Next()
                 }
@@ -58,10 +59,10 @@ public class OpenRouteServiceClient : IOpenRouteServiceClient
         return await PostDirectionsAsync(body, ct);
     }
 
-    public async Task<RouteResult> GenerateOutAndBackAsync(double lat, double lon, double distanceKm, double? bearingDegrees, CancellationToken ct)
+    public async Task<RouteResult> GenerateOutAndBackAsync(double lat, double lon, double distanceMiles, double? bearingDegrees, CancellationToken ct)
     {
         var bearing = bearingDegrees ?? _random.NextDouble() * 360.0;
-        var halfDistanceMeters = (distanceKm * 1000) / 2.0;
+        var halfDistanceMeters = (distanceMiles * MetersPerMile) / 2.0;
         var turnaround = GeoMath.Destination(lat, lon, bearing, halfDistanceMeters);
 
         // Route start -> turnaround -> start. ORS treats this as a single multi-waypoint

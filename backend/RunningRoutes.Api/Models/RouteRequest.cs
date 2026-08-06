@@ -14,8 +14,8 @@ public class RouteRequest
     public double Latitude { get; set; }
     public double Longitude { get; set; }
 
-    /// <summary>Target distance in kilometers.</summary>
-    public double DistanceKm { get; set; }
+    /// <summary>Target distance in miles.</summary>
+    public double DistanceMiles { get; set; }
 
     public RouteType Type { get; set; } = RouteType.Loop;
 
