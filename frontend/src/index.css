@@ -1,0 +1,65 @@
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.app {
+  display: flex;
+  height: 100vh;
+}
+
+.sidebar {
+  width: 320px;
+  flex: none;
+  padding: 1.5rem;
+  box-sizing: border-box;
+  background: #fafafa;
+  border-right: 1px solid #ddd;
+  overflow-y: auto;
+}
+
+.map-container {
+  flex: 1;
+}
+
+.field {
+  margin-bottom: 1rem;
+}
+
+.field label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.field input,
+.field select {
+  width: 100%;
+  padding: 0.4rem;
+  box-sizing: border-box;
+}
+
+.radio-row {
+  display: flex;
+  gap: 1rem;
+}
+
+button {
+  width: 100%;
+  padding: 0.6rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.stats {
+  margin-top: 1rem;
+  font-size: 0.9rem;
+}
+
+.error {
+  color: #b00020;
+  font-size: 0.9rem;
+  margin-top: 0.75rem;
+}
