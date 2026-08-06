@@ -69,7 +69,7 @@ export default function RouteForm({ onSubmit, onLocationChange, loading }) {
         <input
           type="number"
           min="0.5"
-          step="0.5"
+          step="0.1"
           value={distanceMiles}
           onChange={(e) => setDistanceMiles(e.target.value)}
         />

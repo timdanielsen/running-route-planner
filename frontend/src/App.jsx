@@ -38,7 +38,6 @@ export default function App() {
         {stats && (
           <div className="stats">
             <div>Distance: {stats.distanceMiles} mi</div>
-            <div>Est. time: {stats.durationMin} min</div>
           </div>
         )}
       </div>
