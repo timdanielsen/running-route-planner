@@ -21,17 +21,20 @@ public class OpenRouteServiceClient : IOpenRouteServiceClient
     private const double MetersPerMile = GeoMath.MetersPerMile;
     private readonly HttpClient _httpClient;
     private readonly IGraveyardLookupService _graveyardLookup;
+    private readonly IGatedCommunityLookupService _gatedCommunityLookup;
     private readonly ILogger<OpenRouteServiceClient> _logger;
     private readonly Random _random = new();
 
     public OpenRouteServiceClient(
         HttpClient httpClient,
         IGraveyardLookupService graveyardLookup,
+        IGatedCommunityLookupService gatedCommunityLookup,
         IConfiguration config,
         ILogger<OpenRouteServiceClient> logger)
     {
         _httpClient = httpClient;
         _graveyardLookup = graveyardLookup;
+        _gatedCommunityLookup = gatedCommunityLookup;
         _logger = logger;
 
         var apiKey = config["OpenRouteService:ApiKey"];
@@ -161,14 +164,19 @@ public class OpenRouteServiceClient : IOpenRouteServiceClient
         return await PostDirectionsAsync(body, options, ct);
     }
 
-    // Looks up nearby graveyards and, if any are found, adds them to the request as an
-    // avoid_polygons MultiPolygon. The search radius matches the requested distance since a loop
-    // or out-and-back could extend that far from the start point; capped so a very long distance
-    // request can't blow up the Overpass query.
+    // Looks up nearby graveyards and gated communities/private streets and, if any are found,
+    // adds them to the request as an avoid_polygons MultiPolygon. The search radius matches the
+    // requested distance since a loop or out-and-back could extend that far from the start
+    // point; capped so a very long distance request can't blow up the Overpass queries.
     private async Task AddAvoidPolygonsAsync(Dictionary<string, object> options, double lat, double lon, double distanceMiles, CancellationToken ct)
     {
         var radiusMiles = Math.Min(distanceMiles, 15.0);
-        var rings = await _graveyardLookup.FindNearbyGraveyardsAsync(lat, lon, radiusMiles, ct);
+
+        var graveyardRingsTask = _graveyardLookup.FindNearbyGraveyardsAsync(lat, lon, radiusMiles, ct);
+        var gatedAreaRingsTask = _gatedCommunityLookup.FindNearbyGatedAreasAsync(lat, lon, radiusMiles, ct);
+        await Task.WhenAll(graveyardRingsTask, gatedAreaRingsTask);
+
+        var rings = graveyardRingsTask.Result.Concat(gatedAreaRingsTask.Result).ToList();
         if (rings.Count > 0)
         {
             options["avoid_polygons"] = new

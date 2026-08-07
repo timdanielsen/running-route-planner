@@ -12,15 +12,14 @@ public class RoutesController : ControllerBase
     private const int MaxAmenityCount = 5;
 
     // How far off a loop's actual path a restroom/fountain can be and still count as "on the
-    // way" for the loop-first placement strategy - about a 4-5 minute walking detour. Widened
-    // (doubled) only as far as needed to find `count` candidates, up to this cap - see
-    // SelectStopsAlongLoop. Never uncapped: an early version fell back to "any distance goes"
-    // when the tight threshold came up short, and arc-length-target matching with no distance
-    // limit picked a candidate that was a "perfect" spacing match but kilometers off the actual
-    // path over a much closer, only slightly-worse-spaced one - a 5mi request came back as
-    // 19.6mi. Capping the widening means we honestly report "not enough found" instead.
-    private const double MaxLoopDetourMeters = 400.0;
-    private const double MaxLoopDetourWidenLimitMeters = 3200.0;
+    // way" for the loop-first placement strategy - about a 40-minute-mile's worth of a detour,
+    // one way. Candidates farther than this are never considered at all, no matter how well they'd
+    // otherwise fit - see SelectStopsAlongLoop. Never uncapped: an early version fell back to "any
+    // distance goes" when a tighter threshold came up short, and ranking by spacing fit with no
+    // distance limit picked a candidate that was a "perfect" spacing match but kilometers off the
+    // actual path over a much closer one - a 5mi request came back as 19.6mi. Capping this means we
+    // honestly report "not enough found" instead of reaching that far.
+    private const double MaxLoopDetourMeters = 3200.0;
 
     // ORS caps directions requests at 70 total waypoints (confirmed via direct testing - a
     // ~260-point request came back with error code 2004). BuildGuidedLoopCoordinates splices the
@@ -329,17 +328,20 @@ public class RoutesController : ControllerBase
         return diff > 180.0 ? 360.0 - diff : diff;
     }
 
-    // Picks up to `count` distinct candidates for a loop route, preferring ones already close to
-    // the loop's actual generated path (minimal detour) and spread across its length instead of
-    // clustered at one point: the first is targeted at roughly 1/(count+1) of the total loop
-    // distance in, the second at 2/(count+1), and so on.
+    // Picks up to `count` distinct candidates for a loop route, minimizing total added distance:
+    // takes the candidates closest to the loop's actual path first (greedy nearest-first),
+    // skipping any candidate that lands too close - along the loop, not straight-line - to one
+    // already picked, so multiple stops don't cluster on top of each other when the loop is long
+    // enough to spread them out. Distance to the path is the primary criterion, spacing only a
+    // soft constraint on top of it.
     //
-    // The candidate pool is capped to MaxLoopDetourMeters (widened only as far as strictly
-    // needed to find `count` candidates, up to MaxLoopDetourWidenLimitMeters) *before* ranking
-    // by arc-length target. Ranking by arc-length match first with no distance cap would let a
-    // "perfectly spaced" candidate that's kilometers off the actual path beat one that's a much
-    // smaller, more sensible detour but slightly worse-spaced - distance to the loop has to be
-    // the primary filter, not a tie-breaker.
+    // An earlier version inverted this: it ranked by how well a candidate matched an ideal
+    // 1/(count+1), 2/(count+1), ... evenly-spaced arc-length target, with distance to the path
+    // only a tie-breaker. That meant a candidate that was a great spacing match but a poor
+    // (up to MaxLoopDetourMeters) detour could beat one sitting almost directly on the path -
+    // on a 16mi loop with 3 requested water fountains, this produced a 23.88mi route because
+    // multiple picks each pulled in close to the full detour cap chasing a spacing target while
+    // a fountain nearly on the route itself went unused.
     private static List<AmenityStop> SelectStopsAlongLoop(
         IReadOnlyList<AmenityStop> candidates, List<double[]> loopPoints, double totalArcLengthMeters, int count)
     {
@@ -348,32 +350,34 @@ public class RoutesController : ControllerBase
             return [];
         }
 
-        var projections = candidates
+        // Half of what the old even-spacing slot width would have been - enough to keep stops
+        // from landing right on top of each other, without being so strict that it routinely
+        // rejects a genuinely close, only-mildly-misspaced candidate in favor of a farther one.
+        var minSeparationMeters = totalArcLengthMeters / (count + 1) / 2.0;
+
+        var ordered = candidates
             .Select(c => (Stop: c, Projection: ProjectOntoPolyline(c.Latitude, c.Longitude, loopPoints)))
+            .Where(p => p.Projection.DistanceMeters <= MaxLoopDetourMeters)
+            .OrderBy(p => p.Projection.DistanceMeters)
             .ToList();
 
-        var threshold = MaxLoopDetourMeters;
-        var pool = projections.Where(p => p.Projection.DistanceMeters <= threshold).ToList();
-        while (pool.Count < count && threshold < MaxLoopDetourWidenLimitMeters)
-        {
-            threshold = Math.Min(threshold * 2, MaxLoopDetourWidenLimitMeters);
-            pool = projections.Where(p => p.Projection.DistanceMeters <= threshold).ToList();
-        }
-
-        var used = new HashSet<AmenityStop>();
         var result = new List<AmenityStop>();
+        var chosenArcLengths = new List<double>();
 
-        for (var i = 0; i < count && used.Count < pool.Count; i++)
+        foreach (var (stop, projection) in ordered)
         {
-            var targetArcLengthMeters = totalArcLengthMeters * (i + 1) / (count + 1);
-            var next = pool
-                .Where(p => !used.Contains(p.Stop))
-                .OrderBy(p => Math.Abs(p.Projection.ArcLengthMeters - targetArcLengthMeters))
-                .ThenBy(p => p.Projection.DistanceMeters)
-                .First();
+            if (result.Count >= count)
+            {
+                break;
+            }
 
-            used.Add(next.Stop);
-            result.Add(next.Stop);
+            if (chosenArcLengths.Any(arc => Math.Abs(arc - projection.ArcLengthMeters) < minSeparationMeters))
+            {
+                continue;
+            }
+
+            result.Add(stop);
+            chosenArcLengths.Add(projection.ArcLengthMeters);
         }
 
         return result;

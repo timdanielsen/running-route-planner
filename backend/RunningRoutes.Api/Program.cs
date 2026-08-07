@@ -22,6 +22,7 @@ builder.Services.AddHttpClient<IOverpassClient, OverpassClient>(client =>
         "RunningRoutePlanner/1.0 (+https://github.com/timdanielsen/running-route-planner)");
 });
 builder.Services.AddScoped<IGraveyardLookupService, GraveyardLookupService>();
+builder.Services.AddScoped<IGatedCommunityLookupService, GatedCommunityLookupService>();
 builder.Services.AddScoped<IAmenityLookupService, AmenityLookupService>();
 builder.Services.AddScoped<ICrossingSafetyService, CrossingSafetyService>();
 
