@@ -22,8 +22,9 @@ function RecenterOnStartChange({ latitude, longitude }) {
   return null;
 }
 
-export default function RouteMap({ routeGeoJson, start, amenityStops }) {
+export default function RouteMap({ routeGeoJson, start, amenityStops, nearbyAmenities, crossingWarnings }) {
   const center = start ? [start.latitude, start.longitude] : NYC;
+  const amenityMarkers = [...(amenityStops ?? []), ...(nearbyAmenities ?? [])];
 
   return (
     <MapContainer center={center} zoom={14} className="map-container">
@@ -34,7 +35,7 @@ export default function RouteMap({ routeGeoJson, start, amenityStops }) {
       <RecenterOnStartChange latitude={start?.latitude} longitude={start?.longitude} />
       {start && <Marker position={[start.latitude, start.longitude]} />}
       {routeGeoJson && <GeoJSON key={JSON.stringify(routeGeoJson)} data={routeGeoJson} />}
-      {amenityStops?.map((stop, i) => {
+      {amenityMarkers.map((stop, i) => {
         const style = AMENITY_STYLE[stop.type] ?? { color: "#333", label: stop.type };
         return (
           <CircleMarker
@@ -43,13 +44,25 @@ export default function RouteMap({ routeGeoJson, start, amenityStops }) {
             radius={9}
             pathOptions={{ color: style.color, fillColor: style.color, fillOpacity: 0.9, weight: 2 }}
           >
-            <Tooltip permanent direction="top" offset={[0, -10]} className="amenity-tooltip">
+            <Tooltip direction="top" offset={[0, -10]} className="amenity-tooltip">
               {style.label}
               {stop.name ? `: ${stop.name}` : ""}
             </Tooltip>
           </CircleMarker>
         );
       })}
+      {crossingWarnings?.map((crossing, i) => (
+        <CircleMarker
+          key={i}
+          center={[crossing.latitude, crossing.longitude]}
+          radius={8}
+          pathOptions={{ color: "#c0392b", fillColor: "#e74c3c", fillOpacity: 0.85, weight: 3 }}
+        >
+          <Tooltip direction="top" offset={[0, -10]} className="amenity-tooltip">
+            Unmarked crossing{crossing.roadName ? ` on ${crossing.roadName}` : ""}
+          </Tooltip>
+        </CircleMarker>
+      ))}
     </MapContainer>
   );
 }

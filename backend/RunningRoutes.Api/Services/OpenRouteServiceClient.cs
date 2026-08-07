@@ -67,15 +67,15 @@ public class OpenRouteServiceClient : IOpenRouteServiceClient
                 // collapsing into an out-and-back shape.
                 points = 3,
                 seed = seed ?? _random.Next()
-            },
-            ["profile_params"] = QuietWeighting
+            }
         };
         await AddAvoidPolygonsAsync(options, lat, lon, distanceMiles, ct);
 
         var body = new
         {
             coordinates = new[] { new[] { lon, lat } },
-            options
+            options,
+            extra_info = ExtraInfo
         };
 
         return await PostDirectionsAsync(body, options, ct);
@@ -92,7 +92,7 @@ public class OpenRouteServiceClient : IOpenRouteServiceClient
         var halfDistanceMeters = (distanceMiles * MetersPerMile) / 2.0;
         var turnaround = GeoMath.Destination(lat, lon, bearing, halfDistanceMeters);
 
-        var options = new Dictionary<string, object> { ["profile_params"] = QuietWeighting };
+        var options = new Dictionary<string, object>();
         await AddAvoidPolygonsAsync(options, lat, lon, distanceMiles, ct);
 
         // Route start -> turnaround -> start. ORS treats this as a single multi-waypoint
@@ -105,7 +105,8 @@ public class OpenRouteServiceClient : IOpenRouteServiceClient
                 new[] { turnaround.Lon, turnaround.Lat },
                 new[] { lon, lat }
             },
-            options
+            options,
+            extra_info = ExtraInfo
         };
 
         return await PostDirectionsAsync(body, options, ct);
@@ -120,7 +121,7 @@ public class OpenRouteServiceClient : IOpenRouteServiceClient
     // can end up looking like an out-and-back even when Loop was requested.
     private async Task<RouteResult> GenerateThroughStopsAsync(double lat, double lon, double distanceMiles, IReadOnlyList<AmenityStop> stops, CancellationToken ct)
     {
-        var options = new Dictionary<string, object> { ["profile_params"] = QuietWeighting };
+        var options = new Dictionary<string, object>();
         await AddAvoidPolygonsAsync(options, lat, lon, distanceMiles, ct);
 
         var coordinates = new List<double[]> { new[] { lon, lat } };
@@ -143,7 +144,7 @@ public class OpenRouteServiceClient : IOpenRouteServiceClient
 
         coordinates.Add(new[] { lon, lat });
 
-        var body = new { coordinates = coordinates.ToArray(), options };
+        var body = new { coordinates = coordinates.ToArray(), options, extra_info = ExtraInfo };
 
         var result = await PostDirectionsAsync(body, options, ct);
         result.AmenityStops = stops.ToList();
@@ -168,18 +169,20 @@ public class OpenRouteServiceClient : IOpenRouteServiceClient
         }
     }
 
-    // Biases the foot-walking route away from busy/loud roads (highway classification, speed
-    // limits, etc.) instead of just taking the shortest path. Factor 1.0 = strongest preference
-    // for quiet ways. This is ORS's documented lever for "avoid major roads" on foot profiles;
-    // there's no separate "avoid highways" option for pedestrians since ORS foot routing doesn't
-    // treat major roads as impassable, just undesirable.
-    private static readonly object QuietWeighting = new
-    {
-        weightings = new
-        {
-            quiet = 1.0
-        }
-    };
+    // Requests a breakdown of which OSM way classification each part of the route actually
+    // used (footway/path/track vs. residential street vs. secondary/primary road), so we can
+    // tell the caller how much of the route runs on a real road with no sidewalk distinction.
+    //
+    // We previously set a "quiet" profile_params weighting here instead, documented by ORS as
+    // biasing pedestrian routes away from busy roads. Verified via direct A/B testing against
+    // the live API (same coordinates, quiet=0 vs quiet=1.0, on both foot-walking AND
+    // cycling-regular where this weighting is most canonically documented) that it produces
+    // byte-for-byte identical routes either way - a silent no-op. A closed upstream issue
+    // ("Investigate Quiet and Green routing", asking "how to sustainably generate weighting
+    // data") suggests this needs a separately precomputed graph layer that the free public ORS
+    // instance likely doesn't build, even though the API accepts and echoes the parameter
+    // without any error. Removed rather than left in place giving false confidence.
+    private static readonly string[] ExtraInfo = ["waytype"];
 
     private async Task<RouteResult> PostDirectionsAsync(object requestBody, Dictionary<string, object> options, CancellationToken ct)
     {
@@ -213,16 +216,44 @@ public class OpenRouteServiceClient : IOpenRouteServiceClient
         var geoJson = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
 
         // ORS puts aggregate distance/duration under features[0].properties.summary
-        var summary = geoJson
-            .GetProperty("features")[0]
-            .GetProperty("properties")
-            .GetProperty("summary");
+        var properties = geoJson.GetProperty("features")[0].GetProperty("properties");
+        var summary = properties.GetProperty("summary");
 
         return new RouteResult
         {
             GeoJson = geoJson,
             DistanceMeters = summary.GetProperty("distance").GetDouble(),
-            DurationSeconds = summary.GetProperty("duration").GetDouble()
+            DurationSeconds = summary.GetProperty("duration").GetDouble(),
+            BusyRoadPercent = ExtractBusyRoadPercent(properties)
         };
+    }
+
+    // ORS's waytype breakdown values: 1 = State Road (primary/trunk), 2 = Road
+    // (secondary/tertiary/unclassified) - both are real roads with car traffic and no
+    // distinction from a sidewalk in the routing graph. 3 = Street (residential/service) is
+    // deliberately not counted here: those are normal, low-traffic, and usually don't have a
+    // separately-mapped sidewalk at all even in perfectly ordinary neighborhoods, so flagging
+    // them would trigger on nearly every route for no real safety reason.
+    private static readonly double[] BusyRoadWaytypeValues = [1.0, 2.0];
+
+    private static double ExtractBusyRoadPercent(JsonElement properties)
+    {
+        if (!properties.TryGetProperty("extras", out var extras) ||
+            !extras.TryGetProperty("waytype", out var waytype) ||
+            !waytype.TryGetProperty("summary", out var waytypeSummary))
+        {
+            return 0;
+        }
+
+        double busyPercent = 0;
+        foreach (var entry in waytypeSummary.EnumerateArray())
+        {
+            if (BusyRoadWaytypeValues.Contains(entry.GetProperty("value").GetDouble()))
+            {
+                busyPercent += entry.GetProperty("amount").GetDouble();
+            }
+        }
+
+        return busyPercent;
     }
 }

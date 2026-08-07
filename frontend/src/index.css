@@ -87,3 +87,13 @@ button {
   font-size: 0.9rem;
   margin-top: 0.75rem;
 }
+
+.warning {
+  color: #7a4a00;
+  background: #fff3cd;
+  border: 1px solid #ffe69c;
+  border-radius: 4px;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.85rem;
+  margin-top: 0.75rem;
+}

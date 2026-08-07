@@ -34,3 +34,21 @@ export async function generateRoute({
 
   return response.json();
 }
+
+export async function findNearbyAmenities({ latitude, longitude, radiusMiles, restroom, waterFountain }) {
+  const params = new URLSearchParams({
+    latitude,
+    longitude,
+    radiusMiles,
+    restroom,
+    waterFountain,
+  });
+  const response = await fetch(`/api/amenities?${params.toString()}`);
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Nearby amenities request failed (${response.status}): ${body}`);
+  }
+
+  return response.json();
+}

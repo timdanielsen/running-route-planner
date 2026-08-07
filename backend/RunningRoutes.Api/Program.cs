@@ -8,12 +8,14 @@ builder.Services.AddControllers()
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient<IOpenRouteServiceClient, OpenRouteServiceClient>();
 builder.Services.AddHttpClient<IOverpassClient, OverpassClient>(client =>
 {
-    // Public Overpass instance; these lookups are best-effort, so keep this timeout short
-    // rather than letting a slow Overpass response stall route generation.
-    client.Timeout = TimeSpan.FromSeconds(10);
+    // Generous per-endpoint timeout since OverpassClient now falls back across multiple
+    // independent mirrors rather than retrying just one - worth waiting longer on each before
+    // moving on, rather than giving up too early on an endpoint that would've come through.
+    client.Timeout = TimeSpan.FromSeconds(30);
     // Overpass rejects requests with no/generic User-Agent with 406 - .NET's HttpClient sends
     // none by default, so this is required, not just polite.
     client.DefaultRequestHeaders.UserAgent.ParseAdd(
@@ -21,6 +23,7 @@ builder.Services.AddHttpClient<IOverpassClient, OverpassClient>(client =>
 });
 builder.Services.AddScoped<IGraveyardLookupService, GraveyardLookupService>();
 builder.Services.AddScoped<IAmenityLookupService, AmenityLookupService>();
+builder.Services.AddScoped<ICrossingSafetyService, CrossingSafetyService>();
 
 const string CorsPolicy = "AllowFrontendDev";
 builder.Services.AddCors(options =>

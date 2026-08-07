@@ -12,12 +12,18 @@ public class RoutesController : ControllerBase
 
     private readonly IOpenRouteServiceClient _orsClient;
     private readonly IAmenityLookupService _amenityLookup;
+    private readonly ICrossingSafetyService _crossingSafety;
     private readonly ILogger<RoutesController> _logger;
 
-    public RoutesController(IOpenRouteServiceClient orsClient, IAmenityLookupService amenityLookup, ILogger<RoutesController> logger)
+    public RoutesController(
+        IOpenRouteServiceClient orsClient,
+        IAmenityLookupService amenityLookup,
+        ICrossingSafetyService crossingSafety,
+        ILogger<RoutesController> logger)
     {
         _orsClient = orsClient;
         _amenityLookup = amenityLookup;
+        _crossingSafety = crossingSafety;
         _logger = logger;
     }
 
@@ -48,39 +54,87 @@ public class RoutesController : ControllerBase
             return BadRequest($"waterFountainCount must be between 0 and {MaxAmenityCount}.");
         }
 
-        var searchRadiusMiles = Math.Min(request.DistanceMiles, 15.0);
+        // SelectStops only ever targets candidates up to roughly half the route distance out -
+        // a stop farther than that could never be selected anyway. Searching the full requested
+        // distance was wasteful and, worse, made the Overpass query noticeably heavier for
+        // longer routes (more elements to fetch/parse over a much bigger area) with no benefit,
+        // which in testing made a 16mi/2-restroom request fail more often than it should have
+        // even though restrooms existed well within half that distance.
+        var searchRadiusMiles = Math.Min((request.DistanceMiles / 2.0) + 1.0, 15.0);
 
-        // Overpass lookups are the slow part of this request (occasionally 10s+ each on the free
-        // public instance), so run the restroom and water fountain searches concurrently rather
-        // than back-to-back when both are requested.
-        var restroomTask = request.RestroomCount > 0
-            ? FindBestStopsAsync(AmenityType.Restroom, request, searchRadiusMiles, request.RestroomCount, ct)
-            : Task.FromResult(new List<AmenityStop>());
-        var fountainTask = request.WaterFountainCount > 0
-            ? FindBestStopsAsync(AmenityType.WaterFountain, request, searchRadiusMiles, request.WaterFountainCount, ct)
-            : Task.FromResult(new List<AmenityStop>());
-        await Task.WhenAll(restroomTask, fountainTask);
+        // Overpass lookups are the slow part of this request, so fetch raw candidates for both
+        // types concurrently rather than back-to-back. Selection (which candidates to actually
+        // use) happens afterward, synchronously, once both lists are in hand - see below for why.
+        var restroomCandidatesTask = request.RestroomCount > 0
+            ? _amenityLookup.FindNearbyAsync(request.Latitude, request.Longitude, searchRadiusMiles, AmenityType.Restroom, ct)
+            : Task.FromResult<IReadOnlyList<AmenityStop>>([]);
+        var fountainCandidatesTask = request.WaterFountainCount > 0
+            ? _amenityLookup.FindNearbyAsync(request.Latitude, request.Longitude, searchRadiusMiles, AmenityType.WaterFountain, ct)
+            : Task.FromResult<IReadOnlyList<AmenityStop>>([]);
+        await Task.WhenAll(restroomCandidatesTask, fountainCandidatesTask);
 
-        if (request.RestroomCount > 0 && restroomTask.Result.Count < request.RestroomCount)
+        var restroomCandidates = restroomCandidatesTask.Result;
+        var fountainCandidates = fountainCandidatesTask.Result;
+
+        if (request.RestroomCount > 0 && restroomCandidates.Count == 0)
         {
             return BadRequest(
-                $"Found only {restroomTask.Result.Count} of {request.RestroomCount} requested public restroom(s) " +
+                $"No public restroom found within {searchRadiusMiles:0.#} miles of your start location. " +
+                "Try a longer distance or a different starting point.");
+        }
+
+        if (request.WaterFountainCount > 0 && fountainCandidates.Count == 0)
+        {
+            return BadRequest(
+                $"No water fountain found within {searchRadiusMiles:0.#} miles of your start location. " +
+                "Try a longer distance or a different starting point.");
+        }
+
+        // Pick ONE shared direction across both amenity types before selecting any individual
+        // stop. Without this, restrooms and water fountains each independently pick their own
+        // "same direction as each other" bearing (see SelectStops below) but with no
+        // coordination between the two - in testing, a 5mi request with 2 restrooms + 3
+        // fountains came back as 17.9mi because the restrooms ended up ~230-240° from start
+        // while the fountains ended up ~60-115°, nearly opposite directions, forcing the route
+        // to zigzag across the start point repeatedly to hit all five. Anchoring on the single
+        // candidate (from either type) closest to where the very first stop should be keeps
+        // everything heading the same way.
+        var allCandidates = restroomCandidates.Concat(fountainCandidates).ToList();
+        double? sharedBearing = null;
+        if (allCandidates.Count > 0)
+        {
+            var halfDistanceMeters = (request.DistanceMiles * GeoMath.MetersPerMile) / 2.0;
+            var totalStopsRequested = request.RestroomCount + request.WaterFountainCount;
+            var firstStopTargetMeters = halfDistanceMeters / (totalStopsRequested + 1);
+            var anchor = allCandidates
+                .OrderBy(c => Math.Abs(GeoMath.DistanceMeters(request.Latitude, request.Longitude, c.Latitude, c.Longitude) - firstStopTargetMeters))
+                .First();
+            sharedBearing = GeoMath.Bearing(request.Latitude, request.Longitude, anchor.Latitude, anchor.Longitude);
+        }
+
+        var restroomStops = SelectStops(restroomCandidates, request, request.RestroomCount, sharedBearing);
+        var fountainStops = SelectStops(fountainCandidates, request, request.WaterFountainCount, sharedBearing);
+
+        if (request.RestroomCount > 0 && restroomStops.Count < request.RestroomCount)
+        {
+            return BadRequest(
+                $"Found only {restroomStops.Count} of {request.RestroomCount} requested public restroom(s) " +
                 $"within {searchRadiusMiles:0.#} miles of your start location. Try a longer distance, a different " +
                 "starting point, or fewer restrooms.");
         }
 
-        if (request.WaterFountainCount > 0 && fountainTask.Result.Count < request.WaterFountainCount)
+        if (request.WaterFountainCount > 0 && fountainStops.Count < request.WaterFountainCount)
         {
             return BadRequest(
-                $"Found only {fountainTask.Result.Count} of {request.WaterFountainCount} requested water fountain(s) " +
+                $"Found only {fountainStops.Count} of {request.WaterFountainCount} requested water fountain(s) " +
                 $"within {searchRadiusMiles:0.#} miles of your start location. Try a longer distance, a different " +
                 "starting point, or fewer fountains.");
         }
 
         // Visit required stops nearest-first, so a route with several restrooms/fountains doesn't
         // zigzag back and forth more than it has to.
-        var requiredStops = restroomTask.Result
-            .Concat(fountainTask.Result)
+        var requiredStops = restroomStops
+            .Concat(fountainStops)
             .OrderBy(stop => GeoMath.DistanceMeters(request.Latitude, request.Longitude, stop.Latitude, stop.Longitude))
             .ToList();
 
@@ -94,6 +148,12 @@ public class RoutesController : ControllerBase
                     request.Latitude, request.Longitude, request.DistanceMiles, request.BearingDegrees, requiredStops, ct),
                 _ => throw new ArgumentOutOfRangeException(nameof(request.Type), request.Type, "Unknown route type.")
             };
+
+            // ORS's own routing can't tell a marked crossing from an unmarked one (its
+            // maintainers confirm crossing type isn't factored in at all), so this can only
+            // flag risky crossings on the route it already produced, not steer generation away
+            // from them.
+            result.CrossingWarnings = await _crossingSafety.FindUnmarkedCrossingsAsync(result.GeoJson, ct);
 
             return Ok(result);
         }
@@ -111,10 +171,9 @@ public class RoutesController : ControllerBase
     // last one exactly at the halfway/turnaround point would make it the literal end of the route
     // (OpenRouteServiceClient then has to route further out and back for it to read as "on the
     // way" rather than "the destination") - targeting short of that leaves room for that.
-    private async Task<List<AmenityStop>> FindBestStopsAsync(AmenityType type, RouteRequest request, double radiusMiles, int count, CancellationToken ct)
+    private static List<AmenityStop> SelectStops(IReadOnlyList<AmenityStop> candidates, RouteRequest request, int count, double? sharedBearing)
     {
-        var candidates = await _amenityLookup.FindNearbyAsync(request.Latitude, request.Longitude, radiusMiles, type, ct);
-        if (candidates.Count == 0)
+        if (candidates.Count == 0 || count == 0)
         {
             return [];
         }
@@ -122,18 +181,16 @@ public class RoutesController : ControllerBase
         var halfDistanceMeters = (request.DistanceMiles * GeoMath.MetersPerMile) / 2.0;
         var used = new HashSet<AmenityStop>();
         var result = new List<AmenityStop>();
-        double? anchorBearing = null;
 
         for (var i = 0; i < count && used.Count < candidates.Count; i++)
         {
             var targetDistanceMeters = halfDistanceMeters * (i + 1) / (count + 1);
             IEnumerable<AmenityStop> remaining = candidates.Where(c => !used.Contains(c));
 
-            // After the first stop, prefer candidates roughly in the same direction as it, so a
-            // multi-stop request reads as "several stops along the way out" instead of zigzagging
-            // to opposite sides of the start point to hit each one - which is exactly what
-            // distance-only selection did in testing (a 4mi request came back as 19+mi).
-            if (anchorBearing is { } bearing)
+            // Prefer candidates roughly in the shared direction, so a multi-stop request reads
+            // as "several stops along the way out" instead of zigzagging to opposite sides of
+            // the start point to hit each one.
+            if (sharedBearing is { } bearing)
             {
                 var sameDirection = remaining
                     .Where(c => AngleDifference(bearing, GeoMath.Bearing(request.Latitude, request.Longitude, c.Latitude, c.Longitude)) <= 60.0)
@@ -148,7 +205,6 @@ public class RoutesController : ControllerBase
                 .OrderBy(c => Math.Abs(GeoMath.DistanceMeters(request.Latitude, request.Longitude, c.Latitude, c.Longitude) - targetDistanceMeters))
                 .First();
 
-            anchorBearing ??= GeoMath.Bearing(request.Latitude, request.Longitude, next.Latitude, next.Longitude);
             used.Add(next);
             result.Add(next);
         }
