@@ -151,6 +151,16 @@ public class OpenRouteServiceClient : IOpenRouteServiceClient
         return result;
     }
 
+    public async Task<RouteResult> GenerateAlongGuidedPathAsync(double lat, double lon, double distanceMiles, IReadOnlyList<double[]> coordinates, CancellationToken ct)
+    {
+        var options = new Dictionary<string, object>();
+        await AddAvoidPolygonsAsync(options, lat, lon, distanceMiles, ct);
+
+        var body = new { coordinates = coordinates.ToArray(), options, extra_info = ExtraInfo };
+
+        return await PostDirectionsAsync(body, options, ct);
+    }
+
     // Looks up nearby graveyards and, if any are found, adds them to the request as an
     // avoid_polygons MultiPolygon. The search radius matches the requested distance since a loop
     // or out-and-back could extend that far from the start point; capped so a very long distance
